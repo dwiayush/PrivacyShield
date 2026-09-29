@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Probe S1 measures the effect of this permission. It is the ONLY permission the spike requests (probe S13 checks). -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <application
+        android:allowBackup="false"
+        android:label="PrivacyShield Spike" />
+</manifest>
