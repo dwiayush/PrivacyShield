@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 jobs:
   emulator:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     continue-on-error: ${{ matrix.experimental }}
     strategy:
@@ -54,7 +54,7 @@ jobs:
   aggregate:
     needs: emulator
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
