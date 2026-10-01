@@ -14,7 +14,7 @@ import sys
 
 ALLOWED_PERMISSION_SUFFIXES = (".DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",)
 ALLOWED_PERMISSIONS = {"android.permission.QUERY_ALL_PACKAGES"}
-PROBE_ORDER = ["S1", "S2", "S3", "S4", "S5", "S6", "S10", "S13", "S16", "S18", "S19", "S20", "S21"]
+PROBE_ORDER = ["S1", "S2", "S3", "S3S", "S4", "S5", "S6", "S6C", "S10", "S10G", "S13", "S16", "S18", "S19", "S20", "S21"]
 
 
 def parse_text(text):
@@ -69,7 +69,11 @@ def _err(d):
 
 
 def verdict(probe, d):
-    """Return (status, summary). Status: PASS, FAIL, OBSERVED, ERROR."""
+    """Return (status, summary). Status: PASS, FAIL, INCONCLUSIVE, OBSERVED, ERROR.
+
+    INCONCLUSIVE means the probe got no data but could not prove the data would exist if access were
+    allowed (for example an empty list on a fresh device). Control probes (S3S, S6C, S10G) settle these.
+    """
     if probe == "S1":
         if _err(d):
             return "ERROR", d["error"]
@@ -89,9 +93,25 @@ def verdict(probe, d):
         bad = []
         for op, groups in d.items():
             user = groups.get("user", {}) if isinstance(groups, dict) else {}
-            if user and all(k.startswith("exc:") for k in user if k != "_other"):
-                bad.append(op)
+            keys = [k for k in user if k != "_other"]
+            if user and all(k.startswith("exc:") for k in keys):
+                bad.append(f'{op} ({keys[0][4:]})')
         return ("FAIL" if bad else "PASS"), ("unreadable: " + ", ".join(bad)) if bad else "all four ops answered"
+    if probe == "S3S":
+        if _err(d):
+            return "ERROR", d["error"]
+        expected = {"allow": 0, "ignore": 1, "deny": 2}
+        problems = []
+        for op, modes in d.items():
+            if not isinstance(modes, dict):
+                continue
+            if "error" in modes:
+                problems.append(f'{op}: {modes["error"]}')
+                continue
+            wrong = [m for m, want in expected.items() if modes.get(m) != want]
+            if wrong:
+                problems.append(f'{op}: {", ".join(f"{m}={modes.get(m)}" for m in wrong)}')
+        return ("FAIL" if problems else "PASS"), ("; ".join(problems) if problems else "value read equals value set for all four ops")
     if probe == "S4":
         if _err(d):
             return "ERROR", d["error"]
@@ -99,18 +119,41 @@ def verdict(probe, d):
     if probe == "S5":
         if _err(d):
             return "ERROR", d["error"]
-        return ("PASS" if d.get("readable") else "FAIL"), f'{d.get("enabledCount")} listeners; readable={d.get("readable")}'
+        readable = d.get("controlReadable", d.get("readable"))  # older logs used "readable"
+        note = "" if d.get("settingSet", True) else " (setting unset: none enabled)"
+        return ("PASS" if readable else "FAIL"), f'{d.get("enabledCount")} listeners{note}; secure settings readable={readable}'
     if probe == "S6":
         # Hypothesis: NOT available without privileged access. An answer with entries means the hypothesis is wrong.
         if _err(d):
             return "PASS", f'blocked as predicted ({d["error"].rsplit(".", 1)[-1]})'
         entries = d.get("returnedEntries", 0)
-        return ("FAIL" if entries and entries > 0 else "PASS"), f"returned {entries} entries"
+        if entries and entries > 0:
+            return "FAIL", f"returned {entries} entries"
+        return "INCONCLUSIVE", "returned 0 entries; an empty list could also mean no usage yet (see S6C)"
+    if probe == "S6C":
+        if _err(d):
+            return "PASS", f'blocked as predicted ({d["error"].rsplit(".", 1)[-1]})'
+        others = d.get("otherPackagesVisible", 0)
+        if others:
+            return "FAIL", f"{others} OTHER packages visible without privileges"
+        if d.get("returnedEntries", 0) == 0:
+            return "PASS", "empty even though an entry exists: filtered or blocked"
+        return "PASS", "only our own package visible"
+    if probe == "S10G":
+        if _err(d):
+            return "ERROR", d["error"]
+        wo, wi = d.get("without", {}), d.get("with", {})
+        wo_n, wi_n = wo.get("events", 0) + wo.get("dailyStats", 0), wi.get("events", 0) + wi.get("dailyStats", 0)
+        if wo_n > 0:
+            return "FAIL", f"data available without a grant ({wo_n})"
+        if wi_n == 0:
+            return "INCONCLUSIVE", "no data even after granting: nothing to compare"
+        return "PASS", f"nothing without a grant, {wi_n} items with it"
     if probe == "S10":
         if _err(d):
             return "ERROR", d["error"]
         avail = d.get("eventsAvailableWithoutGrant")
-        return ("FAIL" if avail else "PASS"), f"events without grant: {avail}"
+        return ("FAIL" if avail else "OBSERVED"), f"events without grant: {avail} (see S10G for the comparison)"
     if probe == "S13":
         if _err(d):
             return "ERROR", d["error"]
@@ -149,13 +192,13 @@ def evaluate(runs):
 
 
 def to_markdown(evaluated):
-    icons = {"PASS": "PASS", "FAIL": "FAIL", "OBSERVED": "obs", "ERROR": "ERR"}
+    icons = {"PASS": "PASS", "FAIL": "FAIL", "INCONCLUSIVE": "inconcl", "OBSERVED": "obs", "ERROR": "ERR"}
     lines = [
         "# Device compatibility results",
         "",
         "> Generated by `tools/aggregate_probes.py`. PASS = the API answered the way our design needs; it does",
         "> **not** prove the answer was correct. FAIL = the hypothesis in `docs/phase0-spike-plan.md` did not hold",
-        "> on that device. ERR = the probe threw. obs = observation only. Emulator rows show AOSP behavior, not OEM behavior.",
+        "> on that device. ERR = the probe threw. inconcl = no data, and we cannot tell whether that is because access is blocked. obs = observation only. Emulator rows show AOSP behavior, not OEM behavior.",
         "",
         f"Runs: {len(evaluated)}",
         "",

@@ -30,6 +30,12 @@ enum class Capability(
     val category: ExposureCategory,
     /** Plain-language description used in evidence text. Must state a fact, never an intent. */
     val plainName: String,
+    /**
+     * First Android API level on which this access can exist at all. Below it the capability is
+     * NOT APPLICABLE (nothing to hold), which is different from UNOBSERVABLE (it may exist but we cannot
+     * read it). Confirmed on emulators (2026-09-29): the all-files settings screen is absent below API 30.
+     */
+    val introducedInApi: Int = 23,
 ) {
     ACCESSIBILITY_CONTENT(25, ExposureCategory.SCREEN_CONTROL, "an enabled accessibility service that can read on-screen content"),
     ACCESSIBILITY_BASIC(10, ExposureCategory.SCREEN_CONTROL, "an enabled accessibility service"),
@@ -37,10 +43,10 @@ enum class Capability(
     SMS(12, ExposureCategory.COMMUNICATIONS, "permission to read or receive text messages"),
     DEVICE_ADMIN(12, ExposureCategory.DEVICE_CONTROL, "device administrator status"),
     OVERLAY(10, ExposureCategory.SCREEN_CONTROL, "permission to display over other apps"),
-    BACKGROUND_LOCATION(10, ExposureCategory.SENSORS, "permission to access location in the background"),
+    BACKGROUND_LOCATION(10, ExposureCategory.SENSORS, "permission to access location in the background", introducedInApi = 29),
     CALL_LOG(8, ExposureCategory.COMMUNICATIONS, "permission to read the call log"),
-    INSTALL_UNKNOWN_APPS(8, ExposureCategory.DEVICE_CONTROL, "permission to install other apps"),
-    ALL_FILES(8, ExposureCategory.DATA_ACCESS, "access to all files on the device"),
+    INSTALL_UNKNOWN_APPS(8, ExposureCategory.DEVICE_CONTROL, "permission to install other apps", introducedInApi = 26),
+    ALL_FILES(8, ExposureCategory.DATA_ACCESS, "access to all files on the device", introducedInApi = 30),
     CAMERA(5, ExposureCategory.SENSORS, "camera permission"),
     MICROPHONE(5, ExposureCategory.SENSORS, "microphone permission"),
     USAGE_ACCESS(5, ExposureCategory.DATA_ACCESS, "usage access (can see which apps you use)"),
@@ -49,6 +55,9 @@ enum class Capability(
     COARSE_LOCATION(2, ExposureCategory.SENSORS, "approximate location permission");
 
     val isHighWeight: Boolean get() = weight >= 10
+
+    /** False means "cannot exist on this Android version": do NOT report it as a blind spot. */
+    fun isApplicableOn(apiLevel: Int): Boolean = apiLevel >= introducedInApi
 }
 
 /** Where the app came from. "Trusted" is decided by the data layer's installer allowlist. */

@@ -39,11 +39,42 @@ class AggregateTests(unittest.TestCase):
         self.assertEqual(ap.verdict("S6", GOOD["S6"])[0], "PASS")
         self.assertEqual(ap.verdict("S6", {"blocked": False, "returnedEntries": 12})[0], "FAIL")
 
+    def test_s6_empty_result_is_inconclusive_not_a_pass(self):
+        # Regression: the first real run showed 0 entries on API 31-36, which proves nothing on a fresh device.
+        self.assertEqual(ap.verdict("S6", {"blocked": False, "returnedEntries": 0})[0], "INCONCLUSIVE")
+
+    def test_s6_control_settles_it(self):
+        self.assertEqual(ap.verdict("S6C", {"returnedEntries": 0, "ownEntryVisible": False, "otherPackagesVisible": 0})[0], "PASS")
+        self.assertEqual(ap.verdict("S6C", {"returnedEntries": 1, "ownEntryVisible": True, "otherPackagesVisible": 0})[0], "PASS")
+        self.assertEqual(ap.verdict("S6C", {"error": "java.lang.SecurityException"})[0], "PASS")
+        st, _ = ap.verdict("S6C", {"returnedEntries": 40, "ownEntryVisible": True, "otherPackagesVisible": 39})
+        self.assertEqual(st, "FAIL")  # per-app usage would be obtainable: the design must change
+
+    def test_s10_control(self):
+        self.assertEqual(ap.verdict("S10G", {"without": {"events": 0, "dailyStats": 0}, "with": {"events": 5, "dailyStats": 3}})[0], "PASS")
+        self.assertEqual(ap.verdict("S10G", {"without": {"events": 0, "dailyStats": 0}, "with": {"events": 0, "dailyStats": 0}})[0], "INCONCLUSIVE")
+        self.assertEqual(ap.verdict("S10G", {"without": {"events": 3, "dailyStats": 0}, "with": {"events": 5, "dailyStats": 0}})[0], "FAIL")
+
+    def test_s3_seeded_requires_value_read_equals_value_set(self):
+        ok = {op: {"allow": 0, "ignore": 1, "deny": 2, "default": 3} for op in ["OVERLAY", "USAGE_ACCESS"]}
+        self.assertEqual(ap.verdict("S3S", ok)[0], "PASS")
+        bad = dict(ok, OVERLAY={"allow": 0, "ignore": 0, "deny": 2, "default": 2})  # 'default' is not judged
+        st, summ = ap.verdict("S3S", bad)
+        self.assertEqual(st, "FAIL"); self.assertIn("ignore=0", summ)
+        st, summ = ap.verdict("S3S", dict(ok, ALL_FILES={"error": "IllegalArgumentException"}))
+        self.assertEqual(st, "FAIL"); self.assertIn("ALL_FILES", summ)
+
+    def test_s5_unset_setting_is_not_unreadable(self):
+        # Regression: API 23/24 emulators reported FAIL because no listener was enabled (setting null).
+        st, summ = ap.verdict("S5", {"settingSet": False, "controlReadable": True, "enabledCount": 0})
+        self.assertEqual(st, "PASS"); self.assertIn("none enabled", summ)
+        self.assertEqual(ap.verdict("S5", {"settingSet": False, "controlReadable": False, "enabledCount": 0})[0], "FAIL")
+
     def test_s3_flags_unreadable_ops(self):
         d = json.loads(json.dumps(GOOD["S3"]))
         d["ALL_FILES"]["user"] = {"exc:IllegalArgumentException": 40}
         st, summ = ap.verdict("S3", d)
-        self.assertEqual(st, "FAIL"); self.assertIn("ALL_FILES", summ)
+        self.assertEqual(st, "FAIL"); self.assertIn("ALL_FILES", summ); self.assertIn("IllegalArgumentException", summ)
 
     def test_s1_permission_binder_failure_is_a_fail(self):
         d = dict(GOOD["S1"], permsError="android.os.TransactionTooLargeException", countWithPermissions=0)

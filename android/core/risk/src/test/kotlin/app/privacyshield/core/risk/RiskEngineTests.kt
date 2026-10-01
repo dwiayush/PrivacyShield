@@ -278,6 +278,14 @@ fun main() {
         }
     }
 
+    test("applicability: access that cannot exist on an Android version is not a blind spot") {
+        check(!ALL_FILES.isApplicableOn(29) && ALL_FILES.isApplicableOn(30)) { "ALL_FILES boundary is API 30" }
+        check(!INSTALL_UNKNOWN_APPS.isApplicableOn(25) && INSTALL_UNKNOWN_APPS.isApplicableOn(26)) { "INSTALL_UNKNOWN boundary is API 26" }
+        check(!BACKGROUND_LOCATION.isApplicableOn(28) && BACKGROUND_LOCATION.isApplicableOn(29)) { "BACKGROUND_LOCATION boundary is API 29" }
+        val others = Capability.entries - setOf(ALL_FILES, INSTALL_UNKNOWN_APPS, BACKGROUND_LOCATION)
+        check(others.all { it.isApplicableOn(SupportTier.MIN_SUPPORTED_API) }) { "all other capabilities exist from the minimum supported API" }
+    }
+
     test("support tiers: provisional API boundaries") {
         eq(SupportTier.forApiLevel(37), SupportTier.FULL); eq(SupportTier.forApiLevel(33), SupportTier.FULL)
         eq(SupportTier.forApiLevel(32), SupportTier.STANDARD); eq(SupportTier.forApiLevel(29), SupportTier.STANDARD)

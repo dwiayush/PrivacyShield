@@ -7,14 +7,14 @@ their data, permissions, sensors and device**, with evidence and honest uncertai
 
 | Area | State |
 |---|---|
-| Risk engine, alert policy, device health score (pure Kotlin) | Implemented; **31 tests pass** on the JVM, including an exhaustive invariant check |
-| Verification probe app (`android/spike`) and device-farm workflows | Written; probe code **type-checked** against the Android 35 API but **never run**; workflow YAML validated but **never executed** |
-| Probe log aggregator and Firebase device picker (Python) | Implemented; **14 tests pass** |
+| Risk engine, alert policy, device health score (pure Kotlin) | Implemented; **32 tests pass** on the JVM, including an exhaustive invariant check |
+| Verification probe app (`android/spike`) and emulator workflow | **Ran on 12 emulators (API 23-36)** on 2026-09-29. Newer control probes (S3S, S6C, S10G) type-checked but **not yet run**. Firebase workflow **never executed** |
+| Probe log aggregator and Firebase device picker (Python) | Implemented; **19 tests pass** |
 | Android app, collectors, database, UI | **Not started** |
 | Android API behavior | **Unverified**; see `docs/phase0-spike-plan.md` |
 | Gradle build | **Not created** (no access to Maven in the authoring environment) |
 
-Nothing here has been run on an Android device yet.
+The probe app has run on 12 emulators (Android 6-16); see `docs/android-limitations.md` for what that does and does not prove. Nothing has run on a physical phone.
 
 ## Compatibility goal
 

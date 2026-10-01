@@ -3,6 +3,8 @@ package app.privacyshield.spike
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.ActivityManager
 import android.app.AppOpsManager
+import android.app.Instrumentation
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
@@ -11,6 +13,7 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.os.UserManager
 import android.provider.Settings
@@ -66,7 +69,7 @@ object Probes {
     )
 
     /** Runs all probes; emits one logcat line each and returns the lines. */
-    fun runAll(ctx: Context): List<String> {
+    fun runAll(ctx: Context, instrumentation: Instrumentation? = null): List<String> {
         val run = UUID.randomUUID().toString().take(8)
         val lines = mutableListOf<String>()
 
@@ -92,6 +95,13 @@ object Probes {
         emit("S19") { s19PreinstalledSensitive(packages) }
         emit("S20") { s20Resources(ctx) }
         emit("S21") { s21Services(ctx) }
+        // Seeded/control probes use shell identity (UiAutomation), which can disturb accessibility state,
+        // so they run LAST. They exist because "the API answered" (S3, S6, S10) does not prove the answer is right.
+        if (instrumentation != null) {
+            emit("S3S") { s3Seeded(ctx, instrumentation) }
+            emit("S6C") { s6Control(ctx, instrumentation) }
+            emit("S10G") { s10Granted(ctx, instrumentation) }
+        }
         return lines
     }
 
@@ -238,11 +248,15 @@ object Probes {
         return out
     }
 
-    /** S5: is the notification-listener setting readable, and how many listeners are enabled? */
+    /**
+     * S5: how many notification listeners are enabled? A null setting usually means "none enabled", not
+     * "unreadable", so a control key that is always set on a working device tells the two apart.
+     */
     private fun s5NotificationListeners(ctx: Context): JSONObject {
         val raw = Settings.Secure.getString(ctx.contentResolver, "enabled_notification_listeners")
+        val control = Settings.Secure.getString(ctx.contentResolver, "default_input_method")
         val count = raw?.split(":")?.count { it.isNotBlank() } ?: 0
-        return JSONObject().put("readable", raw != null).put("enabledCount", count)
+        return JSONObject().put("settingSet", raw != null).put("controlReadable", control != null).put("enabledCount", count)
     }
 
     /** S6: per-app historical AppOps data must NOT be available without privileged access. */
@@ -326,5 +340,114 @@ object Probes {
             .put("googlePlayServices", present("com.google.android.gms"))
             .put("googlePlayStore", present("com.android.vending"))
             .put("huaweiMobileServices", present("com.huawei.hwid"))
+    }
+
+    // ---------------------------------------------------------------- seeded / control probes
+
+    private val SHELL_OPS = linkedMapOf(
+        "OVERLAY" to "SYSTEM_ALERT_WINDOW",
+        "USAGE_ACCESS" to "GET_USAGE_STATS",
+        "INSTALL_UNKNOWN" to "REQUEST_INSTALL_PACKAGES",
+        "ALL_FILES" to "MANAGE_EXTERNAL_STORAGE",
+    )
+
+    /** appops shell mode -> the mode number AppOpsManager should report. "default" is recorded, not judged. */
+    private val MODES = linkedMapOf("allow" to 0, "ignore" to 1, "deny" to 2, "default" to 3)
+
+    private fun shell(inst: Instrumentation, cmd: String): String {
+        val pfd = inst.uiAutomation.executeShellCommand(cmd)
+        return ParcelFileDescriptor.AutoCloseInputStream(pfd).use { it.readBytes().toString(Charsets.UTF_8) }.trim().take(80)
+    }
+
+    /**
+     * S3S: set each special-access state on the OTHER package in this test run (the test APK, a separate
+     * package and uid) through shell identity, then read it back the way the product would. Proves the
+     * value we read is the value that was set, not merely that the API returned something.
+     */
+    @Suppress("DEPRECATION")
+    private fun s3Seeded(ctx: Context, inst: Instrumentation): JSONObject {
+        val testPkg = ctx.packageName + ".test"
+        val uid = ctx.packageManager.getApplicationInfo(testPkg, 0).uid
+        val aom = ctx.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val out = JSONObject()
+        for ((name, shellOp) in SHELL_OPS) {
+            val op = APP_OPS.getValue(name)
+            val observed = JSONObject()
+            try {
+                for ((mode, _) in MODES) {
+                    shell(inst, "appops set $testPkg $shellOp $mode")
+                    val got = if (Build.VERSION.SDK_INT >= 29) {
+                        aom.unsafeCheckOpNoThrow(op, uid, testPkg)
+                    } else {
+                        aom.checkOpNoThrow(op, uid, testPkg)
+                    }
+                    observed.put(mode, got)
+                }
+            } catch (t: Throwable) {
+                observed.put("error", t.javaClass.simpleName)
+            } finally {
+                try { shell(inst, "appops set $testPkg $shellOp default") } catch (t: Throwable) { /* best effort reset */ }
+            }
+            out.put(name, observed)
+        }
+        return out
+    }
+
+    /**
+     * S6C: control for S6. Create an explicit AppOps entry for our own package via shell, then ask the
+     * unprivileged API for it. Empty despite a known entry means filtered/blocked; other packages
+     * visible would mean the per-app usage timeline IS obtainable without privileges.
+     */
+    private fun s6Control(ctx: Context, inst: Instrumentation): JSONObject {
+        val own = ctx.packageName
+        val aom = ctx.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        shell(inst, "appops set $own WAKE_LOCK allow")
+        try {
+            val method = AppOpsManager::class.java.getMethod("getPackagesForOps", Array<String>::class.java)
+            val result = method.invoke(aom, arrayOf("android:wake_lock")) as? List<*>
+            var ownVisible = false
+            var others = 0
+            var inspectError: String? = null
+            result?.forEach { entry ->
+                if (entry == null) return@forEach
+                try {
+                    val name = entry.javaClass.getMethod("getPackageName").invoke(entry) as String
+                    if (name == own) ownVisible = true else others++
+                } catch (t: Throwable) {
+                    inspectError = t.javaClass.simpleName
+                }
+            }
+            return JSONObject()
+                .put("returnedEntries", result?.size ?: -1)
+                .put("ownEntryVisible", ownVisible)
+                .put("otherPackagesVisible", others)
+                .put("inspectError", inspectError ?: JSONObject.NULL)
+        } finally {
+            try { shell(inst, "appops set $own WAKE_LOCK default") } catch (t: Throwable) { /* best effort reset */ }
+        }
+    }
+
+    /** S10G: usage-stats data before and after granting usage access to ourselves through shell. */
+    private fun s10Granted(ctx: Context, inst: Instrumentation): JSONObject {
+        val own = ctx.packageName
+        val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+
+        fun sample(): JSONObject {
+            val now = System.currentTimeMillis()
+            val events = usm.queryEvents(now - 86_400_000L, now)
+            val ev = UsageEvents.Event()
+            var n = 0
+            while (events.hasNextEvent() && n < 200) { events.getNextEvent(ev); n++ }
+            val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - 86_400_000L, now)
+            return JSONObject().put("events", n).put("dailyStats", stats?.size ?: 0)
+        }
+
+        val without = sample()
+        shell(inst, "appops set $own GET_USAGE_STATS allow")
+        try {
+            return JSONObject().put("without", without).put("with", sample())
+        } finally {
+            try { shell(inst, "appops set $own GET_USAGE_STATS default") } catch (t: Throwable) { /* best effort reset */ }
+        }
     }
 }

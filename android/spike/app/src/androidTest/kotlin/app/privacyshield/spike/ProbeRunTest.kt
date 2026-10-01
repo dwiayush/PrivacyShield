@@ -15,8 +15,8 @@ import org.junit.runner.RunWith
 class ProbeRunTest {
     @Test
     fun runAllProbes() {
-        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
-        val lines = Probes.runAll(ctx)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val lines = Probes.runAll(instrumentation.targetContext, instrumentation)
         assertTrue("no probe output was produced", lines.isNotEmpty())
     }
 }

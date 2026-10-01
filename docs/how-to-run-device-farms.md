@@ -1,8 +1,9 @@
 # How to run the compatibility probes without owning any phones
 
-Status: **the probe app has been type-checked against the Android 35 API but has never been run on any
-device or emulator.** The first workflow run is its first real test, so expect to fix a problem or two.
-Send me the failing log and I will fix it.
+Status: Option A has been run once (2026-09-29, 12 emulators, Android 6-16). Option B has never been run.
+
+**Reading the result page:** the run can say "Success" while one job shows a red cross. That is the Android 17
+(API 37) job, which is marked experimental and is allowed to fail. Judge the run by the compat-results table.
 
 ## Option A: free emulators for every Android version (start here)
 
