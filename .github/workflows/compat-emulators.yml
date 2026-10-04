@@ -1,0 +1,71 @@
+name: compat-emulators
+# Runs the Phase 0 probes on AOSP emulators for Android 6 to 17. Free for public repositories.
+# Emulators show API-level behaviour ONLY. They cannot show OEM (Samsung, Xiaomi, ...) behaviour.
+on:
+  workflow_dispatch:
+jobs:
+  emulator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { api: 23, experimental: false }
+          - { api: 24, experimental: false }
+          - { api: 26, experimental: false }
+          - { api: 28, experimental: false }
+          - { api: 29, experimental: false }
+          - { api: 30, experimental: false }
+          - { api: 31, experimental: false }
+          - { api: 32, experimental: false }
+          - { api: 33, experimental: false }
+          - { api: 34, experimental: false }
+          - { api: 35, experimental: false }
+          - { api: 36, experimental: false }
+          # Android 17: system image availability is unverified, so a failure here is not a failure of the app.
+          - { api: 37, experimental: true }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.10.2' }
+      - name: Run probes on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: rc=0; adb logcat -G 16M || true; adb logcat -c; gradle -p android/spike :app:connectedDebugAndroidTest || rc=$?; adb logcat -d > logcat-api-${{ matrix.api }}.txt; exit $rc
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logcat-api-${{ matrix.api }}
+          path: logcat-api-${{ matrix.api }}.txt
+          if-no-files-found: warn
+  aggregate:
+    needs: emulator
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { pattern: 'logcat-api-*', path: logs, merge-multiple: true }
+      - name: Build compatibility table
+        run: |
+          python3 tools/aggregate_probes.py logs --md compat-results.md --json compat-results.json
+          cat compat-results.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compat-results
+          path: |
+            compat-results.md
+            compat-results.json
