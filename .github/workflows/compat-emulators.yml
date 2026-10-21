@@ -61,11 +61,14 @@ jobs:
         with: { pattern: 'logcat-api-*', path: logs, merge-multiple: true }
       - name: Build compatibility table
         run: |
-          python3 tools/aggregate_probes.py logs --md compat-results.md --json compat-results.json
-          cat compat-results.md >> "$GITHUB_STEP_SUMMARY"
+          python3 tools/aggregate_probes.py logs --md compat-results.md --json compat-results.json --summary compat-summary.md
+          cat compat-summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo "=============== FULL RESULTS (copy from here) ==============="
+          cat compat-results.md
       - uses: actions/upload-artifact@v4
         with:
           name: compat-results
           path: |
             compat-results.md
             compat-results.json
+            compat-summary.md
