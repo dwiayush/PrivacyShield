@@ -237,11 +237,33 @@ def to_markdown(evaluated, empty_files=()):
     return "\n".join(lines)
 
 
+def to_summary(evaluated, empty_files=()):
+    """Compact, narrow summary: one block per device listing ONLY probes that are not PASS or obs.
+
+    The full table is 19 columns wide and gets cut off when a page is printed or captured; this stays readable.
+    """
+    lines = ["# Probe results (compact)", "",
+             f"Runs: {len(evaluated)}. Only probes that did NOT simply pass are listed per device; the full table is in the compat-results artifact.", ""]
+    if empty_files:
+        lines += [f"**WARNING: no probe data captured in: {', '.join(sorted(empty_files))}.** Treat those as UNTESTED.", ""]
+    for e in evaluated:
+        d = e["device"]
+        head = f'**{d.get("manufacturer", "?")} {d.get("model", "?")}**, Android {d.get("release", "?")} (API {d.get("sdkInt", "?")})' + (" [emulator]" if d.get("isEmulator") else "")
+        passed = sum(1 for st, _ in e["results"].values() if st == "PASS")
+        lines.append(f"- {head}: {passed} PASS of {len(e['results'])} probes run" + (f"; missing: {', '.join(e['missing'])}" if e["missing"] else ""))
+        for p in PROBE_ORDER:
+            if p in e["results"] and e["results"][p][0] in ("FAIL", "INCONCLUSIVE", "ERROR"):
+                st, summ = e["results"][p]
+                lines.append(f"    - {p} **{st}**: {summ}")
+    return "\n".join(lines) + "\n"
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("paths", nargs="+")
     ap.add_argument("--md")
     ap.add_argument("--json")
+    ap.add_argument("--summary", help="write the compact summary here")
     args = ap.parse_args(argv)
     records, empty_files = scan_paths(args.paths)
     if not records:
@@ -249,6 +271,9 @@ def main(argv=None):
         return 2
     evaluated = evaluate(group_runs(records))
     md = to_markdown(evaluated, empty_files)
+    if args.summary:
+        with open(args.summary, "w") as fh:
+            fh.write(to_summary(evaluated, empty_files))
     if args.md:
         with open(args.md, "w") as fh:
             fh.write(md)
