@@ -125,6 +125,22 @@ class AggregateTests(unittest.TestCase):
             self.assertIn("WARNING", md); self.assertIn("logcat-api-35.txt", md); self.assertIn("UNTESTED", md)
             self.assertNotIn("logcat-api-34.txt", md.split("WARNING")[1].split("\n")[0])
 
+    def test_compact_summary_lists_only_problems_and_stays_narrow(self):
+        d2 = dict(DEV, manufacturer="Xiaomi", model="M1", sdkInt=33)
+        text = "\n".join([line("a", "DEVICE", DEV), line("a", "S1", GOOD["S1"]), line("a", "S6", {"blocked": False, "returnedEntries": 0}),
+                           line("b", "DEVICE", d2), line("b", "S1", dict(GOOD["S1"], holdsQueryAllPackages=False))])
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "logcat"), "w") as fh:
+                fh.write(text)
+            out = os.path.join(d, "sum.md")
+            self.assertEqual(ap.main([d, "--md", os.path.join(d, "f.md"), "--summary", out]), 0)
+            with open(out) as fh:
+                md = fh.read()
+            self.assertIn("S6 **INCONCLUSIVE**", md); self.assertIn("S1 **FAIL**", md)
+            self.assertNotIn("S1 **PASS**", md)  # passes are counted, not listed
+            self.assertIn("1 PASS of 2 probes run", md)
+            self.assertLess(max(len(l) for l in md.splitlines() if l.startswith("    -")), 200)
+
     def test_no_records_exits_nonzero_so_ci_notices(self):
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, "logcat"), "w") as fh:
